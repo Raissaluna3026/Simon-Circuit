@@ -2,271 +2,215 @@
 .include "m328Pdef.inc"
 .list
 
-; -------------------------------------
-; Definição de registradores
-; -------------------------------------
-.def SEQ_SEL  = r15    ; qual sequência (0..14)
-.def CURR_LEN = r16    ; tamanho atual da sequência (1..16)
-.def SEQ_IDX  = r17    ; índice dentro da sequência (0..15)
-.def BTN_VAL  = r18    ; botão pressionado (0..3)
-.def BTN_FLAG = r19    ; 0 = sem tecla, 1 = tecla disponível
-.def TEMP     = r20    ; uso geral
-.def EXPECT   = r21    ; valor esperado da sequência
-.equ indicador = PD3   ; indicador de acerto de sequencia
+.def SEQ_SEL  = r15
+.def CURR_LEN = r16
+.def SEQ_IDX  = r17
+.def BTN_VAL  = r18
+.def BTN_FLAG = r19
+.def TEMP     = r20
+.def EXPECT   = r21
 
-; -------------------------------------
-; Vetores de interrupção (endereços em bytes)
-; -------------------------------------
 .cseg
-.org 0x0000
-    rjmp RESET          ; Reset
+; endereco onde o codigo comeca, assim que ele o atmega inicia ele vai jumpar para reset pois la temos as configuracoes
+.org 0x0000 
+    rjmp RESET
 
-.org 0x0006             ; PCINT0 (PB0..PB7)
+;como atmega tem tabela fixa de vetores, pcint0 e o que esta no endereco 0x0006 e é ele que usamos pois
+;é equivalent aos pbs, que utilizamos nas interrupcoes
+
+.org 0x0006 
     rjmp PCINT0_ISR
 
-; -------------------------------------
-; TABELA DE 15 SEQUÊNCIAS, CADA UMA COM 16 PASSOS (0..3)
-; 0..3 → LED/botão: 0=PD4/PB0, 1=PD5/PB1, 2=PD6/PB2, 3=PD7/PB3
-; -------------------------------------
-SEQ_TABLE:
-; sequência 0
+
+;Tabela com a sequencia que os leds piscam, a cada erro ele passa para a proxima sequencia,
+;isso foi feito para simular aleatoriedade.
+
+SEQ_TABLE: 
     .db 0,0,2,1,1,1,0,0,3,0,0,0,1,1,0,1
-; sequência 1
     .db 3,1,3,2,0,1,3,2,2,1,1,2,0,0,3,0
-; sequência 2
     .db 2,2,2,0,3,0,3,0,2,2,1,0,0,1,2,0
-; sequência 3
     .db 1,0,3,2,3,2,1,2,2,1,2,0,1,1,1,3
-; sequência 4
     .db 3,2,1,2,0,1,0,2,3,2,0,1,2,1,3,3
-; sequência 5
     .db 3,1,2,1,1,2,3,3,2,1,1,3,0,0,0,1
-; sequência 6
     .db 1,3,0,3,3,3,2,0,0,2,2,0,2,3,1,3
-; sequência 7
     .db 0,2,1,0,2,1,1,2,1,0,2,3,0,0,2,2
-; sequência 8
     .db 1,0,1,0,0,3,0,1,1,3,1,2,3,1,1,2
-; sequência 9
     .db 3,2,3,3,0,1,1,0,2,0,1,1,0,0,0,1
-; sequência 10
     .db 0,0,2,0,1,2,3,1,1,3,1,3,3,1,0,0
-; sequência 11
     .db 3,2,3,3,3,0,0,0,3,2,0,1,1,1,3,1
-; sequência 12
     .db 3,1,2,3,1,0,3,0,0,0,0,1,1,3,3,3
-; sequência 13
     .db 1,3,0,1,3,0,3,2,3,2,3,3,1,1,2,1
-; sequência 14
     .db 0,0,2,0,0,3,1,0,0,1,0,0,1,3,0,1
 
-; =====================================
-; INICIALIZAÇÃO
-; =====================================
 RESET:
-    ; Stack
+	;Configuracao da memoria ram para funcionar de maneira correta
     ldi TEMP, low(RAMEND)
     out SPL, TEMP
     ldi TEMP, high(RAMEND)
-    out SPH, TEMP
+    out SPH, TEMP 
 
-    ; LEDs em PD4..PD7 como saída
-    ldi TEMP, 0b11111000 ; coloquei um 1, antes era ob1111000
+	;Configurando porta dos leds
+    ldi TEMP, 0b11110000 
     out DDRD, TEMP
     clr TEMP
-    out PORTD, TEMP      ; todos LEDs apagados
+    out PORTD, TEMP 
 
-
-    ; Botões PB0..PB3 como entrada com pull-up
+	;Configurando inputs e ativando pull up
     ldi TEMP, 0x00
-    out DDRB, TEMP       ; tudo entrada
+    out DDRB, TEMP
     ldi TEMP, 0x0F
-    out PORTB, TEMP      ; pull-up em PB0..PB3
-
-    ; Habilita interrupção de Pin Change 0
+    out PORTB, TEMP
+	 
+	;Ativando grupo pcint0 que sera utilizado nas interrupcoes
     ldi TEMP, (1<<PCIE0)
     sts PCICR, TEMP
+	;;Ativando as que utilizaremos na interrupcoes dos botoes
     ldi TEMP, (1<<PCINT0)|(1<<PCINT1)|(1<<PCINT2)|(1<<PCINT3)
-    sts PCMSK0, TEMP
+    sts PCMSK0, TEMP 
 
     clr BTN_FLAG
-    clr SEQ_SEL          ; começa na sequência 0
-    ldi CURR_LEN, 1      ; começa com tamanho 1
+    clr SEQ_SEL
+    ldi CURR_LEN, 1 ; indica tamanho da primeira sequencia, comecamos com 1
 
-    sei                  ; habilita interrupções globais
+    sei ; ativa interrupcao global, sem ela nenhuma interrupcao funcionaria
 
-; =====================================
-; LOOP PRINCIPAL
-; =====================================
 StartGame:
     clr BTN_FLAG
     clr SEQ_IDX
-    ldi CURR_LEN, 1      ; sempre recomeça da sequência com tamanho 1
+    ldi CURR_LEN, 1 ; indica tamanho da primeira sequencia, comecamos com 1
 
 GameLoop:
-    rcall ShowSequence
-    rcall ReadPlayerSequence
-	
+    rcall ShowSequence ;; Mostro a sequencia
+    rcall ReadPlayerSequence ;; Leio a sequencia
 
-    ; Se chegou aqui, acertou a rodada
-
-	; --- BLOCO DO LED INDICADOR ---
-    sbi PORTD, indicador   ; Liga o LED indicador (PD3)
-    rcall DelayLong        ; Espera um tempo com ele ligado
-    cbi PORTD, indicador   ; Desliga o LED
-    rcall DelayLong        ; Pequena pausa antes de mostrar a nova sequência
-    ; ------------------------------
     inc CURR_LEN
-    cpi CURR_LEN, 17
-    brlt GameLoop        ; se ainda não chegou em 16, próxima rodada
+    cpi CURR_LEN, 17 ;; O programa acaba quando acertamos os 16 leds seguidos
+					 ;; Se ainda nao temos isso, voltamos pro loop
+    brlt GameLoop
 
-    ; Acertou os 16 passos → vitória, depois próxima sequência
-    rcall WinAnimation
-    rcall NextSequence
-    rjmp StartGame
+    rcall WinAnimation ;; mostra animacao da vitoria
+    rcall NextSequence ;; carrega a proxima sequencia
+    rjmp StartGame ;;reinicia o jogo
 
-; =====================================
-; AVANÇAR PARA A PRÓXIMA SEQUÊNCIA (0..14, cíclico)
-; =====================================
 NextSequence:
     inc SEQ_SEL
     mov TEMP, SEQ_SEL
-	cpi TEMP, 15
-	brlt NextSeqNoWrap
-	clr SEQ_SEL
-         ; se passou de 14, volta para 0
+    cpi TEMP, 15
+    brlt NextSeqNoWrap
+    clr SEQ_SEL
 NextSeqNoWrap:
     ret
 
-; =====================================
-; AJUSTA Z PARA O INÍCIO DA SEQUÊNCIA ATUAL
-; Z = &SEQ_TABLE[SEQ_SEL * 16]
-; =====================================
+	;;Isso faz Z apontar pro inicio da sequencia atual
 SetZToCurrentSeqBase:
-    ; TEMP = SEQ_SEL * 16 (shift 4 vezes)
-    mov TEMP, SEQ_SEL
+	;;Fazemos 4 bit shift left pois isso equivale a multiplicar por 16
+	;;Como cada sequencia possui 16 bytes, fazemos isso para sempre mudar
+	;;para a proxima sequencia com base em seq_sel que mostra o numero da sequencia que estamos
+    mov TEMP, SEQ_SEL 
     lsl TEMP
     lsl TEMP
     lsl TEMP
-    lsl TEMP              ; TEMP = SEQ_SEL * 16 (0..224)
+    lsl TEMP 
 
-    ; Z = endereço base da tabela (em bytes)
+	;;leio a tabela
     ldi ZL, low(SEQ_TABLE*2)
-    ldi ZH, high(SEQ_TABLE*2)
+    ldi ZH, high(SEQ_TABLE*2) 
 
-    ; soma TEMP em Z (byte a byte)
     rcall AddTempToZ
     ret
 
-; =====================================
-; MOSTRAR SEQUÊNCIA (1..CURR_LEN)
-; =====================================
 ShowSequence:
-    clr SEQ_IDX
-    rcall SetZToCurrentSeqBase   ; Z = início da sequência atual
+    clr SEQ_IDX ;; aponta Z para o inicio da sequencia atual, indica qual passo da sequencia estou mostrando
+    rcall SetZToCurrentSeqBase ;; aponto para a sequencia correta dentre as 15
 
-ShowSeqLoop:
-	rcall DelayLong
-    cp SEQ_IDX, CURR_LEN
+ShowSeqLoop: ;; label para mostrar cada led
+    cp SEQ_IDX, CURR_LEN ;; Verifico se ja foram mostrados todos os passos da sequencia, se sim, saio da rotina
     brge ShowSeqDone
 
-    lpm BTN_VAL, Z+              ; lê próximo passo (0..3)
-    rcall FlashLedIndex
+    lpm BTN_VAL, Z+ ; o byte em Z vai para BTN_val e Z incrementa 1 unidade.
+    rcall FlashLedIndex ;; pisque o led correspondente
 
-    inc SEQ_IDX
+    inc SEQ_IDX ;; aumenta 1 para mostrar proximo led
     rjmp ShowSeqLoop
 
 ShowSeqDone:
-    ret
+    ret ;; saio da rotina
 
-; =====================================
-; LER SEQUÊNCIA DO JOGADOR
-; =====================================
-ReadPlayerSequence:
+ReadPlayerSequence: ;; espera jogador aperta botao, se acertar
+					;; piscamos como feedback e vamos pro proximo passo
+					;; se errar vamos para wrong_answer
     clr SEQ_IDX
 
 WaitPress:
-    tst BTN_FLAG
-    breq WaitPress        ; espera botão (flag setada na ISR)
+    tst BTN_FLAG ;; fico preso nesse loop ate achar um botao para processar
+    breq WaitPress
 
-    clr BTN_FLAG          ; consome tecla
+    clr BTN_FLAG ;; "apago o botao"
 
-    ; EXPECT = passo da sequência em SEQ_IDX
-    rcall SetZToCurrentSeqBase   ; Z = base
-    mov TEMP, SEQ_IDX
-    rcall AddTempToZ            ; Z += SEQ_IDX
-    lpm EXPECT, Z
+    rcall SetZToCurrentSeqBase ;; Aponto Z apontar para a sequencia o começo da sequencia altuta
+    mov TEMP, SEQ_IDX 
+    rcall AddTempToZ ;; soma o SEQ_IDX em z para ir para o led correto
+    lpm EXPECT, Z ;; lemos o led
 
-    cp BTN_VAL, EXPECT
-    brne WrongAnswer            ; se diferente → errou
+    cp BTN_VAL, EXPECT ;; comparamos se o esperado é igual o pressionado
+    brne WrongAnswer ;; se for diferente vamos pra wrong_answer
 
-    ; acerto → pisca LED correspondente
-    rcall FlashLedIndex
+    rcall FlashLedIndex ;; se for certo, piscamos o led
 
-    inc SEQ_IDX
-    cp SEQ_IDX, CURR_LEN
-    brlt WaitPress              ; ainda faltam passos
+    inc SEQ_IDX ;; aumentamos 1 na sequencia
+    cp SEQ_IDX, CURR_LEN ;; se a sequencia nao foi toda preenchida, volta pro loop
+    brlt WaitPress
 
-    ; acertou a rodada toda
-    ret
+    ret ;; se ja acabou retornamos
 
 WrongAnswer:
-    ; Erro → anima, avança seq., recomeça
+	;;Se for errado eu mostro animacao de derroto e comeco de novo
     rcall LoseAnimation
     rcall NextSequence
     rjmp StartGame
 
-; =====================================
-; Soma TEMP ao ponteiro Z (TEMP bytes)
-; =====================================
 AddTempToZ:
-    push r22
-    mov  r22, TEMP
+    push r22 ; guardo o registrator r22 para nao perdemos o conteudo
+    mov  r22, TEMP ;coloco o temp em r22, vao utilizar como contador
 AddLoop:
-    tst  r22
-    breq AddDone
-    adiw ZL, 1
-    dec  r22
-    rjmp AddLoop
+    tst  r22 ;; testa se isso é 0
+    breq AddDone ;; se é zero, é já fizemos todas as somas e vamos para addDone
+    adiw ZL, 1 ;; Adiciono 1 no ponteiro Z
+    dec  r22 ; Diminuo o contador
+    rjmp AddLoop ;; Volto pro loop
 AddDone:
-    pop  r22
+    pop  r22 ; retiro o conteudo original de r22
     ret
 
-; =====================================
-; PISCA LED (BTN_VAL = 0..3 → PD4..PD7)
-; =====================================
 FlashLedIndex:
-    push r22
-    ldi TEMP, 0x10       ; PD4
-    mov r22, BTN_VAL
+    push r22 ;; vamos colocar na pilha para não perder o valor
+    ldi TEMP, 0x10 ;; colocamos como padrao no led 0 (pd4) e vamos usar como mascara
+    mov r22, BTN_VAL ;; copio o indice de BTN_VAL para saber quantos bit shifts serão necessários
 
 ShiftLoop:
-    tst r22
+    tst r22 ;; testo se é 0, se for, nao precisamos fazer nada e vamos para Shift
     breq ShiftDone
-    lsl TEMP
+    lsl TEMP ;; se nao for, fazemos bitshift left o suficiente para ir para o led correto
     dec r22
     rjmp ShiftLoop
 
 ShiftDone:
-    out PORTD, TEMP
+    out PORTD, TEMP ;; depois de estar no LED certo, acendemos
     rcall DelayLong
     clr TEMP
-    out PORTD, TEMP
+    out PORTD, TEMP ;; apagamos o led
     rcall DelayLong
 
-    pop r22
-    ret
+    pop r22 ;; retiramos o valor salvo
+    ret ;; retornamos
 
-; =====================================
-; ANIMAÇÃO DE ERRO
-; =====================================
 LoseAnimation:
-    cli
-    clr BTN_FLAG
+    cli ;; desliga interrupcoes globais
+    clr BTN_FLAG ;; da clear no BTN_flag para que nao exista botao pendente
 
-    ldi r23, 3           ; 3 piscadas
-ErrLoop:
-    ldi TEMP, 0b11110000 ; todos LEDs
+    ldi r23, 5 ;; representa quantas vezes o led vai piscar para representar o erro
+ErrLoop: ;; loop do erro
+    ldi TEMP, 0b11110000
     out PORTD, TEMP
     rcall DelayLong
 
@@ -277,39 +221,34 @@ ErrLoop:
     dec r23
     brne ErrLoop
 
-    ; Espera todos os botões soltos
-WaitAllReleased:
+WaitAllReleased: ;; impedir que o jogo reinicie enquanto todos botoes nao estiverem sotos
     in TEMP, PINB
     andi TEMP, 0x0F
-    cpi TEMP, 0x0F       ; 1111 = todos soltos
+    cpi TEMP, 0x0F
     brne WaitAllReleased
 
     rcall DelayLong
 
-    ; limpa flag de PCINT pendente
-    ldi TEMP, (1<<PCIF0)
+    ldi TEMP, (1<<PCIF0) ;; limpar flag de interrupcoes
     sts PCIFR, TEMP
 
-    clr BTN_FLAG
-    sei
-    ret
+    clr BTN_FLAG ;; clear na flag
+    sei ;; ativo interrupcoes
+    ret ;; retorno
 
-; =====================================
-; ANIMAÇÃO DE VITÓRIA (diferente)
-; =====================================
+
+	;;Animacao da vitoria, quando o player zerar uma sequencia
 WinAnimation:
     cli
-    clr BTN_FLAG
+    clr BTN_FLAG 
 
-    ldi r23, 6           ; 6 ciclos de padrão
+    ldi r23, 10
 WinLoop:
-    ; padrão alternado 1
-    ldi TEMP, 0b10100000 ; PD7 e PD5
+    ldi TEMP, 0b10100000
     out PORTD, TEMP
     rcall DelayLong
 
-    ; padrão alternado 2
-    ldi TEMP, 0b01010000 ; PD6 e PD4
+    ldi TEMP, 0b01010000
     out PORTD, TEMP
     rcall DelayLong
 
@@ -319,29 +258,31 @@ WinLoop:
     clr TEMP
     out PORTD, TEMP
 
-    ; também espera soltar botões (por segurança)
 WaitWinRelease:
+	;;Isso serve para garantir que todos os botoes estao soltos antes de voltar pro jogo
+	;;Se não tiverem ficam em um loop
     in TEMP, PINB
     andi TEMP, 0x0F
     cpi TEMP, 0x0F
     brne WaitWinRelease
 
     rcall DelayLong
-    ldi TEMP, (1<<PCIF0)
+	;; Limpamos a flag porque algum botao pode ter sido apertado durante a animacao
+	;; Isso fica numa especie de fila e daria errado quando voltassemos para o jogo
+	;;Limpamos ela escrevendo 1
+    ldi TEMP, (1<<PCIF0) 
     sts PCIFR, TEMP
-    clr BTN_FLAG
-    sei
+    clr BTN_FLAG ;; isso e para garantir que o programa nao vai achar nenhuma entrada velha
+    sei ;; habilito interrupcoes globais
     ret
 
-; =====================================
-; DELAY SIMPLES (NÃO USA r23)
-; =====================================
+	;; Utilizado apenas como delay
 DelayLong:
-    ldi r24, 40          ; ajuste esse valor para mais/menos tempo
+    ldi r24, 40
 DL1:
     ldi r25, 255
 DL2:
-    ldi r22, 255         ; usar r22 em vez de r26
+    ldi r22, 255
 DL3:
     dec r22
     brne DL3
@@ -351,27 +292,25 @@ DL3:
     brne DL1
     ret
 
-
-; =====================================
-; ISR DE PCINT0 (PB0..PB3 → BOTÕES)
-; =====================================
-PCINT0_ISR:
+	;; Salvamos os registradores que vamos utilizar para reveter depois
+	;; Pois podemos mexer neles durante a ISR e perder os dados.
+PCINT0_ISR: 
     push r20
     push r22
     in   r20, SREG
     push r20
-
-    ; debounce simples
     ldi  r22, 150
-DbLoop:
+DbLoop: 
     dec  r22
-    brne DbLoop
+    brne DbLoop ;Representa um pequeno atraso
 
-    in   r20, PINB
-    com  r20            ; invertido: pressionado=1 (pull-up)
-    andi r20, 0x0F      ; só PB0..PB3
+    in   r20, PINB ;; Leio os botoes
+    com  r20 ;; inverto os botoes
+    andi r20, 0x0F ;; se todos ficaram 0, nenhum botao foi pressionado, sai normal pro noPressISR
     breq NoPressISR
-
+	
+	;;Se nem todos ficaram 0, algum foi pressionado, precisamos saber qual e vamos testar 1 por 1
+	;;Testamos botao por botao e dependendo de qual for tomamos medidas diferentes
     cpi  r20, 1
     breq Btn0
     cpi  r20, 2
@@ -380,26 +319,28 @@ DbLoop:
     breq Btn2
     cpi  r20, 8
     breq Btn3
-    rjmp NoPressISR     ; se mais de um botão → ignora
+    rjmp NoPressISR ; Se nenhum botao foi pressionado, tambem vamos para noPressISR
 
+	;Fazemos isso para saber qual botao foi pressionado e salvamos ele em BTN_VAL
 Btn0:
-    ldi BTN_VAL, 0
+    ldi BTN_VAL, 0 
     rjmp SetISR
 Btn1:
-    ldi BTN_VAL, 1
+    ldi BTN_VAL, 1 
     rjmp SetISR
 Btn2:
-    ldi BTN_VAL, 2
+    ldi BTN_VAL, 2 
     rjmp SetISR
 Btn3:
     ldi BTN_VAL, 3
 
 SetISR:
-    ldi BTN_FLAG, 1
+    ldi BTN_FLAG, 1 ;; Sinal pro programa principal para significar de que de fato
+					;; achamos um botao que foi pressionado
 
 NoPressISR:
     pop  r20
     out  SREG, r20
     pop  r22
     pop  r20
-    reti
+    reti ; Retira informações salvas na pilha e volta para o programa normalmente
