@@ -9,6 +9,7 @@
 .def BTN_FLAG = r19
 .def TEMP     = r20
 .def EXPECT   = r21
+.equ indicador = pd3
 
 .cseg
 ; endereco onde o codigo comeca, assim que ele o atmega inicia ele vai jumpar para reset pois la temos as configuracoes
@@ -50,7 +51,7 @@ RESET:
     out SPH, TEMP 
 
 	;Configurando porta dos leds
-    ldi TEMP, 0b11110000 
+    ldi TEMP, 0b11111000 
     out DDRD, TEMP
     clr TEMP
     out PORTD, TEMP 
@@ -82,6 +83,12 @@ StartGame:
 GameLoop:
     rcall ShowSequence ;; Mostro a sequencia
     rcall ReadPlayerSequence ;; Leio a sequencia
+
+	;se chegou aqui o jogador acertou a sequecia
+	sbi PORTD, indicador ;;funcionamento do led indicador 
+	rcall DelayLong
+	cbi PORTD, indicador
+	rcall DelayLong
 
     inc CURR_LEN
     cpi CURR_LEN, 17 ;; O programa acaba quando acertamos os 16 leds seguidos
